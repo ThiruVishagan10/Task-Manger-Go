@@ -14,7 +14,7 @@ func main() {
 			getTasks(w, r)
 
 		case http.MethodPost:
-			getTasks(w, r)
+			createTask(w, r)
 
 		default:
 			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
@@ -22,8 +22,7 @@ func main() {
 	})
 
 	fmt.Println("Server running on :8080")
-}
-
-func getTasks(w http.ResponseWriter, r *http.Request) {
-	panic("unimplemented")
+	if err := http.ListenAndServe(":8080", nil); err != nil {
+		fmt.Printf("Server failed: %v\n", err)
+	}
 }
