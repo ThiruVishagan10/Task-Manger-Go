@@ -1,11 +1,12 @@
 package main
 
 import (
-	"fmt"
+	"log"
 	"net/http"
 )
 
 func main() {
+	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
 
 	http.HandleFunc("/tasks", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
@@ -17,12 +18,27 @@ func main() {
 			createTask(w, r)
 
 		default:
-			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+			respondError(w, r, http.StatusMethodNotAllowed, "Method Not Allowed", nil)
 		}
 	})
 
-	fmt.Println("Server running on :8080")
+	http.HandleFunc("/tasks/",  func(w http.ResponseWriter,r *http.Request){
+		
+		if r.Method == http.MethodGet {
+			if r.URL.Path == "/tasks/" {
+				getTasks(w, r)
+				return
+			}
+			getTasksByID(w, r)
+			return
+		}
+
+		respondError(w, r, http.StatusMethodNotAllowed, "Method Not Allowed", nil)
+
+	})
+
+	log.Println("Server running on :8080")
 	if err := http.ListenAndServe(":8080", nil); err != nil {
-		fmt.Printf("Server failed: %v\n", err)
+		log.Fatalf("Server failed: %v", err)
 	}
 }
