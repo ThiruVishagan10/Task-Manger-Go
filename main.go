@@ -32,17 +32,22 @@ func main() {
 	})
 
 	http.HandleFunc("/tasks/", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet {
-			if r.URL.Path == "/tasks/" {
-				getTasks(w, r)
-				return
-			}
-			getTasksByID(w, r)
-			return
-		}
 
-		respondError(w, r, http.StatusMethodNotAllowed, "Method Not Allowed", nil)
-	})
+	switch r.Method {
+
+	case http.MethodGet:
+		getTasksByID(w, r)
+
+	case http.MethodPut:
+		updateTasks(w, r)
+
+	case http.MethodDelete:
+		deleteTask(w, r)
+
+	default:
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+	}
+})
 
 	log.Printf("Server running on :%s", cfg.Port)
 	if err := http.ListenAndServe(":"+cfg.Port, nil); err != nil {

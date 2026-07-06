@@ -61,3 +61,59 @@ func getTasks(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(tasks)
 }
+
+func updateTasks(w http.ResponseWriter, r *http.Request) {
+	idStr := strings.TrimPrefix(r.URL.Path, "/tasks/")
+
+	id, err := strconv.Atoi(idStr)
+
+	if err != nil {
+		http.Error(w, "Invalid Task ID", http.StatusBadRequest)
+		return
+	}
+
+	var updateTasks Task
+
+	err = json.NewDecoder(r.Body).Decode(&updateTasks)
+
+	if err != nil {
+		http.Error(w, "Invalid Data", http.StatusBadRequest)
+		return
+	}
+
+	for i, task := range tasks {
+		if task.ID == id {
+			tasks[i].Title = updateTasks.Title
+			tasks[i].Completed = updateTasks.Completed
+
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(tasks[i])
+
+			return
+		}
+	}
+
+	http.Error(w, "Task Not Found", http.StatusNotFound)
+}
+
+func deleteTask(w http.ResponseWriter, r *http.Request) {
+	idStr := strings.TrimPrefix(r.URL.Path, "/tasks/")
+
+	id, err := strconv.Atoi(idStr)
+
+	if err != nil {
+		http.Error(w, "Invalid Task ID", http.StatusBadRequest)
+		return
+	}
+
+	for i, task := range tasks {
+		if task.ID == id {
+			tasks = append(tasks[:i], tasks[i+1:]...)
+
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+	}
+
+	http.Error(w, "Task Not Found", http.StatusNotFound)
+}
