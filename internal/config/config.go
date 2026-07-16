@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"errors"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -13,14 +14,41 @@ import (
 var ErrNoDatabaseURL = errors.New("no database URL configured: set Neon_db (or DATABASE_URL) in .env")
 
 const (
-	defaultPort    = "8080"
-	defaultEnvFile = ".env"
+	defaultPort              = "8080"
+	defaultEnvFile           = ".env"
+	defaultGoogleRedirectURL = "http://localhost:8080/auth/google/callback"
+	defaultPostLoginRedirect = "/"
 )
 
 // Config holds everything the server needs to start.
 type Config struct {
 	Port        string
 	DatabaseURL string
+	Google      GoogleConfig
+
+	// SecureCookies marks session cookies Secure, so browsers withhold them
+	// from plaintext HTTP. It must be on in production and off for local
+	// development over http://localhost, where a Secure cookie would never be
+	// sent back and login would appear to silently fail.
+	SecureCookies bool
+
+	// PostLoginRedirect is where a browser lands after Google sign-in
+	// completes. It comes from configuration and never from the request, so it
+	// cannot be turned into an open redirect.
+	PostLoginRedirect string
+}
+
+// GoogleConfig holds the OAuth 2.0 client credentials for Google sign-in.
+type GoogleConfig struct {
+	ClientID     string
+	ClientSecret string
+	RedirectURL  string
+}
+
+// Enabled reports whether Google sign-in is configured. It is optional: the
+// server runs with email and password alone, and only refuses the Google routes.
+func (g GoogleConfig) Enabled() bool {
+	return g.ClientID != "" && g.ClientSecret != ""
 }
 
 // Load reads configuration from the environment, falling back to a .env file in
@@ -42,7 +70,31 @@ func Load() (Config, error) {
 		return Config{}, ErrNoDatabaseURL
 	}
 
-	return Config{Port: port, DatabaseURL: databaseURL}, nil
+	redirectURL := os.Getenv("GOOGLE_REDIRECT_URL")
+	if redirectURL == "" {
+		redirectURL = defaultGoogleRedirectURL
+	}
+
+	postLoginRedirect := os.Getenv("POST_LOGIN_REDIRECT")
+	if postLoginRedirect == "" {
+		postLoginRedirect = defaultPostLoginRedirect
+	}
+
+	// An unparseable value is treated as unset rather than fatal, matching how
+	// the rest of this loader degrades to defaults.
+	secureCookies, _ := strconv.ParseBool(os.Getenv("COOKIE_SECURE"))
+
+	return Config{
+		Port:        port,
+		DatabaseURL: databaseURL,
+		Google: GoogleConfig{
+			ClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
+			ClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
+			RedirectURL:  redirectURL,
+		},
+		SecureCookies:     secureCookies,
+		PostLoginRedirect: postLoginRedirect,
+	}, nil
 }
 
 // loadDotEnv copies KEY=VALUE pairs from path into the environment. A missing

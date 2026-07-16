@@ -9,7 +9,12 @@ import (
 	"github.com/ThiruVishagan10/Task-Manger-Go/internal/task"
 )
 
-// handleCreateTask stores a new task and returns it with its assigned ID.
+// handleCreateTask stores a new task for the signed-in user and returns it with
+// its assigned ID.
+//
+// The owner comes from the session, never from the request body: a task.Task
+// carries no user field precisely so that a client cannot decode one into
+// somebody else's account.
 func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 	var t task.Task
 
@@ -18,7 +23,7 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.tasks.Create(r.Context(), &t); err != nil {
+	if err := s.tasks.Create(r.Context(), userID(r), &t); err != nil {
 		respondError(w, r, http.StatusInternalServerError, "Could Not Create Task", err)
 		return
 	}
@@ -26,9 +31,9 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, t)
 }
 
-// handleListTasks returns every stored task.
+// handleListTasks returns the signed-in user's tasks.
 func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
-	tasks, err := s.tasks.List(r.Context())
+	tasks, err := s.tasks.List(r.Context(), userID(r))
 	if err != nil {
 		respondError(w, r, http.StatusInternalServerError, "Could Not Fetch Tasks", err)
 		return
@@ -44,7 +49,7 @@ func (s *Server) handleGetTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	t, err := s.tasks.Get(r.Context(), id)
+	t, err := s.tasks.Get(r.Context(), userID(r), id)
 	if errors.Is(err, task.ErrNotFound) {
 		respondError(w, r, http.StatusNotFound, "Task Not Found", nil)
 		return
@@ -71,7 +76,7 @@ func (s *Server) handleUpdateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	updated, err := s.tasks.Update(r.Context(), id, t)
+	updated, err := s.tasks.Update(r.Context(), userID(r), id, t)
 	if errors.Is(err, task.ErrNotFound) {
 		respondError(w, r, http.StatusNotFound, "Task Not Found", nil)
 		return
@@ -91,7 +96,7 @@ func (s *Server) handleDeleteTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := s.tasks.Delete(r.Context(), id)
+	err := s.tasks.Delete(r.Context(), userID(r), id)
 	if errors.Is(err, task.ErrNotFound) {
 		respondError(w, r, http.StatusNotFound, "Task Not Found", nil)
 		return
