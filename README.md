@@ -6,14 +6,87 @@ A minimal RESTful Task Manager API written in Go with `net/http`. It provides ba
 
 ## Features
 
-- Create, read, update, and delete tasks (CRUD), scoped to the signed-in user
-- Sign in with **email and password** (bcrypt) or **Google** (OAuth 2.0 + PKCE)
-- Sessions held in the database, so a logout takes effect immediately
-- Persistent storage in PostgreSQL via [`pgx`](https://github.com/jackc/pgx) connection pooling
-- Table schema created automatically on startup
-- Configurable database URL, port, and OAuth credentials via a `.env` file or environment variables
+Everything below is implemented and working.
+
+### Tasks
+
+- Create, read, update, and delete tasks (CRUD) over a JSON REST API
+- Every task is private to the user who created it: each statement filters by
+  owner, so an ownership check cannot be forgotten at a call site
+- A task belonging to someone else answers `404`, never `403` — that an ID
+  exists at all is not something a stranger is entitled to learn
+- The owner is taken from the session and never from the request body, so a
+  client cannot create a task in somebody else's account
+- Tasks list in a stable order (by ID), and an empty list encodes as `[]`
+  rather than `null`
+
+### Accounts and sign-in
+
+- **Email and password** registration and login, hashed with bcrypt
+- **Google sign-in** with the OAuth 2.0 authorization code flow and PKCE
+- **Account linking** — sign in with your password, then visit `/auth/google`
+  to connect a Google account to the account you already hold
+- Google sign-in is **optional**: leave the credentials unset and the API runs
+  on email and password alone, with the Google routes reporting `501`
+- Addresses are normalized (trimmed and lowercased) on every read and write, so
+  `Ada@Example.com` and `ada@example.com` are one account and not two
+- Passwords are validated at 8–72 bytes before a hash is ever computed
+- Registration rejects display-name forms like `Ada <ada@example.com>`, which
+  would otherwise let one address register under two spellings
+- Returning Google users are matched on Google's immutable subject ID rather
+  than their email, so changing a Google address still lands on the same tasks
+
+### Sessions
+
+- Sessions live in the database, so a logout takes effect immediately
+- Two ways to authenticate, for two kinds of client: a `session` cookie for
+  browsers, and an `Authorization: Bearer` token for curl, scripts, and mobile
+  clients. The header wins when both are present
+- Cookies are `HttpOnly` (cross-site scripting cannot read the token out) and
+  `SameSite=Lax` (another origin cannot drive the API as the signed-in user)
+- Sessions expire 7 days after they are issued, enforced on every lookup rather
+  than by a background job
+- Expired sessions are swept hourly, so the table cannot grow without bound
+- Only the SHA-256 of each token is stored, so a leaked database dump yields no
+  usable sessions
+- Every login issues a fresh token, so a token captured before a login cannot be
+  used after it
+- A dead or unknown token clears the client's cookie, rather than leaving the
+  browser to resend it forever
+
+### Hardening
+
+- Login costs the same whether or not the email is registered — an unknown
+  address still pays for a bcrypt comparison — and both failures return one
+  message, so the route cannot be used to test which addresses hold accounts
+- Google's `state` is checked against a cookie in constant time, so a forged
+  callback cannot sign a browser into an attacker's account
+- PKCE binds the authorization code to the browser that started the sign-in, so
+  an intercepted code is useless on its own
+- An address Google does not report as verified is refused
+- A Google sign-in never adopts an existing password account on an email match
+  alone, which closes an account pre-hijacking hole
+- Error responses carry a message and never the underlying error, which is
+  logged instead
+
+### Storage and operations
+
+- Persistent storage in PostgreSQL via [`pgx`](https://github.com/jackc/pgx)
+  connection pooling
+- Tables and indexes created automatically on startup, idempotently, from a
+  schema embedded in the binary
+- An existing pre-authentication `tasks` table is upgraded in place without
+  losing rows
+- Configurable database URL, port, OAuth credentials, and cookie policy via a
+  `.env` file or environment variables, with real environment variables winning
 - Structured request logging with severity levels (`INFO` / `WARN` / `ERROR`)
-- JSON request and response bodies
+  derived from the response status
+- Graceful shutdown: `Ctrl+C` drains in-flight requests, with a 10-second bound
+- Fails fast at startup — a missing connection string or an unreachable database
+  exits immediately rather than on the first request
+- Unsupported methods answer `405` with an `Allow` header, handled by the router
+- Calls out to Google are bounded by a 10-second timeout, so a sign-in cannot
+  hang a request on an unresponsive dependency
 
 ---
 
@@ -167,10 +240,19 @@ CREATE TABLE IF NOT EXISTS tasks (
     completed BOOLEAN NOT NULL DEFAULT FALSE,
     user_id   INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE
 );
+
+-- Supporting indexes, created on startup alongside the tables.
+CREATE INDEX IF NOT EXISTS sessions_user_id_idx    ON sessions (user_id);
+CREATE INDEX IF NOT EXISTS sessions_expires_at_idx ON sessions (expires_at);
+CREATE INDEX IF NOT EXISTS tasks_user_id_idx       ON tasks (user_id);
 ```
 
 `id` is assigned by Postgres, so IDs remain unique across restarts. Deleting a
 user takes their tasks and sessions with it.
+
+The indexes cover the three lookups that happen constantly: every task query
+filters by `user_id`, the cascade from a deleted user finds that user's
+sessions, and the hourly sweep scans by `expires_at`.
 
 ### Upgrading a database that predates authentication
 
@@ -299,10 +381,12 @@ Task-Manger-Go/
   at 72 bytes because that is bcrypt's own limit — it ignores everything past
   it, so a longer password would only be checked up to that point. Rejecting one
   is honest; silently truncating it is not.
-- **Sessions** are 32 random bytes. Only their SHA-256 is stored, so a leaked
-  database dump yields no usable sessions. Lookups reject expired rows in the
-  `WHERE` clause, so a logout or an expiry takes effect immediately rather than
-  whenever the hourly sweep next runs.
+- **Sessions** are 32 random bytes and last 7 days from the moment they are
+  issued. Only their SHA-256 is stored, so a leaked database dump yields no
+  usable sessions. Lookups reject expired rows in the `WHERE` clause, so a
+  logout or an expiry takes effect immediately rather than whenever the hourly
+  sweep next runs. The sweep is housekeeping — it keeps the table from growing
+  without bound — and not the thing that enforces expiry.
 - **Cookies** are `HttpOnly` (a cross-site scripting bug cannot read the token
   out) and `SameSite=Lax` (another origin cannot drive the API as the signed-in
   user, while the redirect back from Google still arrives authenticated).
