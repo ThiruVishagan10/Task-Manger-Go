@@ -2,13 +2,32 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/jackc/pgx/v5"
 )
 
-var nextID int = 1
-var tasks []Task
+// parseTaskID pulls the {id} out of /tasks/{id}, responding with 400 itself if
+// it is missing or non-numeric.
+func parseTaskID(w http.ResponseWriter, r *http.Request) (int, bool) {
+	idStr := strings.Trim(strings.TrimPrefix(r.URL.Path, "/tasks/"), "/")
+
+	if idStr == "" {
+		respondError(w, r, http.StatusBadRequest, "Invalid task ID", nil)
+		return 0, false
+	}
+
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		respondError(w, r, http.StatusBadRequest, "Invalid task ID", err)
+		return 0, false
+	}
+
+	return id, true
+}
 
 func createTask(w http.ResponseWriter, r *http.Request) {
 	var task Task
@@ -20,10 +39,15 @@ func createTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	task.ID = nextID
-	nextID++
+	err = db.QueryRow(r.Context(),
+		`INSERT INTO tasks (title, completed) VALUES ($1, $2) RETURNING id`,
+		task.Title, task.Completed,
+	).Scan(&task.ID)
 
-	tasks = append(tasks, task)
+	if err != nil {
+		respondError(w, r, http.StatusInternalServerError, "Could Not Create Task", err)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 
@@ -31,89 +55,116 @@ func createTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func getTasksByID(w http.ResponseWriter, r *http.Request) {
-	idstr := strings.TrimPrefix(r.URL.Path, "/tasks/")
-	idstr = strings.Trim(idstr, "/")
-
-	if idstr == "" {
-		respondError(w, r, http.StatusBadRequest, "Invalid task ID", nil)
+	id, ok := parseTaskID(w, r)
+	if !ok {
 		return
 	}
 
-	id, err := strconv.Atoi(idstr)
+	var task Task
+
+	err := db.QueryRow(r.Context(),
+		`SELECT id, title, completed FROM tasks WHERE id = $1`, id,
+	).Scan(&task.ID, &task.Title, &task.Completed)
+
+	if errors.Is(err, pgx.ErrNoRows) {
+		respondError(w, r, http.StatusNotFound, "Task Not Found", nil)
+		return
+	}
 
 	if err != nil {
-		respondError(w, r, http.StatusBadRequest, "Invalid task ID", err)
+		respondError(w, r, http.StatusInternalServerError, "Could Not Fetch Task", err)
 		return
 	}
 
-	for _, tasks := range tasks {
-		if tasks.ID == id {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(tasks)
-			return
-		}
-	}
-
-	respondError(w, r, http.StatusNotFound, "Task Not Found", nil)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(task)
 }
 
 func getTasks(w http.ResponseWriter, r *http.Request) {
+	rows, err := db.Query(r.Context(), `SELECT id, title, completed FROM tasks ORDER BY id`)
+
+	if err != nil {
+		respondError(w, r, http.StatusInternalServerError, "Could Not Fetch Tasks", err)
+		return
+	}
+	defer rows.Close()
+
+	tasks := []Task{}
+
+	for rows.Next() {
+		var task Task
+
+		if err := rows.Scan(&task.ID, &task.Title, &task.Completed); err != nil {
+			respondError(w, r, http.StatusInternalServerError, "Could Not Fetch Tasks", err)
+			return
+		}
+
+		tasks = append(tasks, task)
+	}
+
+	if err := rows.Err(); err != nil {
+		respondError(w, r, http.StatusInternalServerError, "Could Not Fetch Tasks", err)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(tasks)
 }
 
 func updateTasks(w http.ResponseWriter, r *http.Request) {
-	idStr := strings.TrimPrefix(r.URL.Path, "/tasks/")
-
-	id, err := strconv.Atoi(idStr)
-
-	if err != nil {
-		http.Error(w, "Invalid Task ID", http.StatusBadRequest)
+	id, ok := parseTaskID(w, r)
+	if !ok {
 		return
 	}
 
 	var updateTasks Task
 
-	err = json.NewDecoder(r.Body).Decode(&updateTasks)
+	err := json.NewDecoder(r.Body).Decode(&updateTasks)
 
 	if err != nil {
-		http.Error(w, "Invalid Data", http.StatusBadRequest)
+		respondError(w, r, http.StatusBadRequest, "Invalid Data", err)
 		return
 	}
 
-	for i, task := range tasks {
-		if task.ID == id {
-			tasks[i].Title = updateTasks.Title
-			tasks[i].Completed = updateTasks.Completed
+	var task Task
 
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(tasks[i])
+	err = db.QueryRow(r.Context(),
+		`UPDATE tasks SET title = $1, completed = $2 WHERE id = $3
+		 RETURNING id, title, completed`,
+		updateTasks.Title, updateTasks.Completed, id,
+	).Scan(&task.ID, &task.Title, &task.Completed)
 
-			return
-		}
+	if errors.Is(err, pgx.ErrNoRows) {
+		respondError(w, r, http.StatusNotFound, "Task Not Found", nil)
+		return
 	}
 
-	http.Error(w, "Task Not Found", http.StatusNotFound)
+	if err != nil {
+		respondError(w, r, http.StatusInternalServerError, "Could Not Update Task", err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(task)
 }
 
 func deleteTask(w http.ResponseWriter, r *http.Request) {
-	idStr := strings.TrimPrefix(r.URL.Path, "/tasks/")
-
-	id, err := strconv.Atoi(idStr)
-
-	if err != nil {
-		http.Error(w, "Invalid Task ID", http.StatusBadRequest)
+	id, ok := parseTaskID(w, r)
+	if !ok {
 		return
 	}
 
-	for i, task := range tasks {
-		if task.ID == id {
-			tasks = append(tasks[:i], tasks[i+1:]...)
+	tag, err := db.Exec(r.Context(), `DELETE FROM tasks WHERE id = $1`, id)
 
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
+	if err != nil {
+		respondError(w, r, http.StatusInternalServerError, "Could Not Delete Task", err)
+		return
 	}
 
-	http.Error(w, "Task Not Found", http.StatusNotFound)
+	if tag.RowsAffected() == 0 {
+		respondError(w, r, http.StatusNotFound, "Task Not Found", nil)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }

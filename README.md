@@ -1,16 +1,15 @@
 # Task Manager (Go)
 
-A minimal RESTful Task Manager API written in Go using only the standard library (`net/http`). It provides basic CRUD operations over an in-memory list of tasks — no database or external dependencies required.
-
-> ⚠️ **In-memory storage:** All tasks live in memory and are lost when the server stops.
+A minimal RESTful Task Manager API written in Go with `net/http`. It provides basic CRUD operations over tasks stored in a **PostgreSQL database** ([Neon](https://neon.tech)).
 
 ---
 
 ## Features
 
 - Create, read, update, and delete tasks (CRUD)
-- Zero external dependencies — pure Go standard library
-- Configurable port via a `.env` file or the `PORT` environment variable
+- Persistent storage in PostgreSQL via [`pgx`](https://github.com/jackc/pgx) connection pooling
+- Table schema created automatically on startup
+- Configurable database URL and port via a `.env` file or environment variables
 - Structured request logging with severity levels (`INFO` / `WARN` / `ERROR`)
 - JSON request and response bodies
 
@@ -19,6 +18,7 @@ A minimal RESTful Task Manager API written in Go using only the standard library
 ## Requirements
 
 - [Go](https://go.dev/dl/) 1.26.4 or later
+- A PostgreSQL database (this project targets [Neon](https://neon.tech))
 
 ---
 
@@ -31,19 +31,34 @@ git clone <repository-url>
 cd Task-Manger-Go
 ```
 
-### 2. Run the server
+### 2. Configure the database
+
+Create a `.env` file in the project root with your Neon connection string:
+
+```env
+Neon_db='postgresql://<user>:<password>@<host>.neon.tech/<database>?sslmode=require&channel_binding=require'
+```
+
+`.env` is git-ignored — never commit real credentials.
+
+### 3. Run the server
 
 ```bash
 go run .
 ```
 
-The server starts on port `8080` by default:
+On startup the server connects to the database, creates the `tasks` table if it
+does not exist, and listens on port `8080` by default:
 
 ```
+Connected to database
 Server running on :8080
 ```
 
-### 3. Build a binary (optional)
+If no connection string is configured, or the database is unreachable, the
+server exits immediately with an error rather than starting.
+
+### 4. Build a binary (optional)
 
 ```bash
 go build -o task-manager .
@@ -54,19 +69,41 @@ go build -o task-manager .
 
 ## Configuration
 
-The port is resolved in the following order of precedence:
+| Variable    | Required | Default | Description                                      |
+|-------------|----------|---------|--------------------------------------------------|
+| `Neon_db`   | Yes      | —       | PostgreSQL connection string. Falls back to `DATABASE_URL` if unset. |
+| `PORT`      | No       | `8080`  | Port the HTTP server listens on.                 |
 
-1. `PORT` environment variable
-2. A `PORT` entry in a `.env` file in the project root
-3. Default: `8080`
+Each value is resolved in this order of precedence:
+
+1. The real environment variable
+2. An entry in a `.env` file in the project root
+3. The default shown above (where one exists)
 
 Example `.env` file:
 
 ```env
 PORT=3000
+Neon_db='postgresql://user:password@host.neon.tech/neondb?sslmode=require&channel_binding=require'
 ```
 
-The `.env` loader ignores blank lines and lines starting with `#`, and will not override variables that are already set in the environment.
+The `.env` loader ignores blank lines and lines starting with `#`, strips surrounding quotes, and will not override variables that are already set in the environment.
+
+---
+
+## Database Schema
+
+Created automatically on startup:
+
+```sql
+CREATE TABLE IF NOT EXISTS tasks (
+    id        SERIAL PRIMARY KEY,
+    title     TEXT    NOT NULL DEFAULT '',
+    completed BOOLEAN NOT NULL DEFAULT FALSE
+);
+```
+
+`id` is assigned by Postgres, so IDs remain unique across restarts.
 
 ---
 
@@ -103,20 +140,23 @@ curl http://localhost:8080/tasks
 Task-Manger-Go/
 ├── main.go        # Entry point, HTTP routing, server startup
 ├── handlers.go    # Request handlers for task CRUD operations
+├── db.go          # Connection pool setup and table schema
 ├── task.go        # Task data model
-├── config.go      # Configuration loading (.env + PORT)
+├── config.go      # Configuration loading (.env + PORT + Neon_db)
 ├── logger.go      # Error responses and severity-based logging
-└── go.mod         # Module definition
+├── go.mod         # Module definition
+└── go.sum         # Dependency checksums
 ```
 
 ---
 
 ## Notes & Limitations
 
-- Data is **not persisted** — restarting the server clears all tasks.
+- Tasks are persisted in PostgreSQL and survive restarts.
 - No authentication or authorization.
 - Error responses are returned as plain text, not JSON.
-- Not safe for concurrent writes — the in-memory task slice is not guarded by a mutex, so it is intended for single-instance, low-concurrency use or local development.
+- `PUT /tasks/{id}` is a full replace — omitting a field resets it to its zero value rather than leaving it unchanged.
+- The schema is created on startup with `CREATE TABLE IF NOT EXISTS`; there is no migration tooling for future schema changes.
 
 ---
 

@@ -1,9 +1,10 @@
 # Task Manager API Reference
 
-A lightweight REST API for managing tasks, built with Go's standard library (`net/http`). Tasks are stored **in memory**, so all data is lost when the server restarts.
+A lightweight REST API for managing tasks, built with Go's `net/http`. Tasks are stored in a **PostgreSQL database** (Neon), so data persists across restarts.
 
 - **Base URL:** `http://localhost:8080`
 - **Default port:** `8080` (override with the `PORT` environment variable)
+- **Database:** connection string from `Neon_db` (or `DATABASE_URL`); see the [README](../README.md#configuration)
 - **Content-Type:** `application/json` for all request/response bodies (except the welcome and error responses, which are plain text)
 
 ---
@@ -14,7 +15,7 @@ A lightweight REST API for managing tasks, built with Go's standard library (`ne
 
 | Field       | Type      | Description                                  |
 |-------------|-----------|----------------------------------------------|
-| `id`        | `integer` | Unique, server-assigned identifier.          |
+| `id`        | `integer` | Unique identifier, assigned by the database. |
 | `title`     | `string`  | The task description.                         |
 | `completed` | `boolean` | Whether the task is done.                     |
 
@@ -26,7 +27,7 @@ A lightweight REST API for managing tasks, built with Go's standard library (`ne
 }
 ```
 
-> **Note:** `id` is assigned by the server on creation. Any `id` supplied in a request body when creating a task is overwritten.
+> **Note:** `id` is assigned by the database on creation. Any `id` supplied in a request body when creating a task is ignored.
 
 ---
 
@@ -65,7 +66,13 @@ Returns every task currently stored.
 ]
 ```
 
-If no tasks exist, the response is `null`.
+Tasks are returned ordered by `id`. If no tasks exist, the response is an empty array `[]`.
+
+**Errors**
+
+| Status | Body                    | When                     |
+|--------|-------------------------|--------------------------|
+| `500`  | `Could Not Fetch Tasks` | The database query failed. |
 
 **Example**
 
@@ -109,9 +116,10 @@ Creates a new task. The server assigns the `id` automatically.
 
 **Errors**
 
-| Status | Body           | When                              |
-|--------|----------------|-----------------------------------|
-| `400`  | `Invalid Data` | The request body is not valid JSON. |
+| Status | Body                    | When                                |
+|--------|-------------------------|-------------------------------------|
+| `400`  | `Invalid Data`          | The request body is not valid JSON. |
+| `500`  | `Could Not Create Task` | The database insert failed.         |
 
 **Example**
 
@@ -149,10 +157,11 @@ Returns a single task by its `id`.
 
 **Errors**
 
-| Status | Body              | When                          |
-|--------|-------------------|-------------------------------|
-| `400`  | `Invalid task ID` | The `id` is missing or non-numeric. |
-| `404`  | `Task Not Found`  | No task exists with that `id`.      |
+| Status | Body                   | When                                |
+|--------|------------------------|-------------------------------------|
+| `400`  | `Invalid task ID`      | The `id` is missing or non-numeric. |
+| `404`  | `Task Not Found`       | No task exists with that `id`.      |
+| `500`  | `Could Not Fetch Task` | The database query failed.          |
 
 **Example**
 
@@ -197,11 +206,12 @@ Replaces the `title` and `completed` fields of an existing task.
 
 **Errors**
 
-| Status | Body              | When                          |
-|--------|-------------------|-------------------------------|
-| `400`  | `Invalid Task ID` | The `id` is non-numeric.       |
-| `400`  | `Invalid Data`    | The request body is not valid JSON. |
-| `404`  | `Task Not Found`  | No task exists with that `id`.      |
+| Status | Body                    | When                                |
+|--------|-------------------------|-------------------------------------|
+| `400`  | `Invalid task ID`       | The `id` is missing or non-numeric. |
+| `400`  | `Invalid Data`          | The request body is not valid JSON. |
+| `404`  | `Task Not Found`        | No task exists with that `id`.      |
+| `500`  | `Could Not Update Task` | The database update failed.         |
 
 **Example**
 
@@ -231,10 +241,11 @@ Removes a task by its `id`.
 
 **Errors**
 
-| Status | Body              | When                          |
-|--------|-------------------|-------------------------------|
-| `400`  | `Invalid Task ID` | The `id` is non-numeric.       |
-| `404`  | `Task Not Found`  | No task exists with that `id`.      |
+| Status | Body                    | When                                |
+|--------|-------------------------|-------------------------------------|
+| `400`  | `Invalid task ID`       | The `id` is missing or non-numeric. |
+| `404`  | `Task Not Found`        | No task exists with that `id`.      |
+| `500`  | `Could Not Delete Task` | The database delete failed.         |
 
 **Example**
 
@@ -253,6 +264,7 @@ curl -X DELETE http://localhost:8080/tasks/1
 | `400` | Bad request — invalid ID or malformed JSON.                    |
 | `404` | Not found — no task matches the requested ID.                  |
 | `405` | Method not allowed — unsupported HTTP method for the route.    |
+| `500` | Server error — the database query failed.                      |
 
 Error responses are returned as **plain text** (the message shown in the tables above), not JSON.
 
