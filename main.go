@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"fmt"
@@ -10,6 +11,17 @@ func main() {
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
 
 	cfg := loadConfig()
+
+	if cfg.DatabaseURL == "" {
+		log.Fatal("No database URL configured: set Neon_db (or DATABASE_URL) in .env")
+	}
+
+	if err := initDB(context.Background(), cfg.DatabaseURL); err != nil {
+		log.Fatalf("Database setup failed: %v", err)
+	}
+	defer db.Close()
+
+	log.Println("Connected to database")
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")

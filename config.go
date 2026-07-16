@@ -7,7 +7,8 @@ import (
 )
 
 type Config struct {
-	Port string
+	Port        string
+	DatabaseURL string
 }
 
 func loadConfig() Config {
@@ -18,7 +19,12 @@ func loadConfig() Config {
 		port = "8080"
 	}
 
-	return Config{Port: port}
+	databaseURL := os.Getenv("Neon_db")
+	if databaseURL == "" {
+		databaseURL = os.Getenv("DATABASE_URL")
+	}
+
+	return Config{Port: port, DatabaseURL: databaseURL}
 }
 
 func loadDotEnv(path string) {
