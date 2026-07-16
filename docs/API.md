@@ -39,7 +39,8 @@ A lightweight REST API for managing tasks, built with Go's `net/http`. Tasks are
 GET /
 ```
 
-Returns a plain-text greeting to confirm the API is running.
+Returns a plain-text greeting to confirm the API is running. Matches the root
+path only, not every unrecognised path.
 
 **Response** — `200 OK` (`text/plain`)
 
@@ -278,7 +279,11 @@ Error responses are returned as **plain text** (the message shown in the tables 
 | `/tasks`       | List tasks      | Create task | 405           | 405           |
 | `/tasks/{id}`  | Get by ID       | 405         | Update task   | Delete task   |
 
-Any method not listed for a route returns `405 Method Not Allowed`.
+Any method not listed for a route returns `405 Method Not Allowed`, along with
+an `Allow` header naming the methods the route does accept.
+
+Routes are matched exactly. A path that is not in the table above — including
+`/tasks/1/` with a trailing slash — returns `404 page not found`.
 
 ---
 

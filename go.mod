@@ -1,4 +1,4 @@
-module task-manager
+module github.com/ThiruVishagan10/Task-Manger-Go
 
 go 1.26.4
 

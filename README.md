@@ -33,7 +33,11 @@ cd Task-Manger-Go
 
 ### 2. Configure the database
 
-Create a `.env` file in the project root with your Neon connection string:
+Copy the example file and fill in your Neon connection string:
+
+```bash
+cp .env.example .env
+```
 
 ```env
 Neon_db='postgresql://<user>:<password>@<host>.neon.tech/<database>?sslmode=require&channel_binding=require'
@@ -44,11 +48,14 @@ Neon_db='postgresql://<user>:<password>@<host>.neon.tech/<database>?sslmode=requ
 ### 3. Run the server
 
 ```bash
-go run .
+go run ./cmd/server
 ```
 
-On startup the server connects to the database, creates the `tasks` table if it
-does not exist, and listens on port `8080` by default:
+Run it from the project root: the `.env` file is read from the working
+directory.
+
+On startup the server connects to the database, applies the schema if the
+`tasks` table does not exist, and listens on port `8080` by default:
 
 ```
 Connected to database
@@ -58,10 +65,13 @@ Server running on :8080
 If no connection string is configured, or the database is unreachable, the
 server exits immediately with an error rather than starting.
 
+Press `Ctrl+C` to stop; in-flight requests are given up to 10 seconds to finish
+before the process exits.
+
 ### 4. Build a binary (optional)
 
 ```bash
-go build -o task-manager .
+go build -o task-manager ./cmd/server
 ./task-manager        # on Windows: task-manager.exe
 ```
 
@@ -138,15 +148,42 @@ curl http://localhost:8080/tasks
 
 ```
 Task-Manger-Go/
-├── main.go        # Entry point, HTTP routing, server startup
-├── handlers.go    # Request handlers for task CRUD operations
-├── db.go          # Connection pool setup and table schema
-├── task.go        # Task data model
-├── config.go      # Configuration loading (.env + PORT + Neon_db)
-├── logger.go      # Error responses and severity-based logging
-├── go.mod         # Module definition
-└── go.sum         # Dependency checksums
+├── cmd/
+│   └── server/
+│       └── main.go          # Entry point: wiring, startup, graceful shutdown
+├── internal/
+│   ├── api/                 # HTTP layer
+│   │   ├── router.go        # Routes, Server type, TaskStore interface
+│   │   ├── task_handler.go  # Request handlers for task CRUD
+│   │   └── response.go      # JSON/error responses and severity logging
+│   ├── config/
+│   │   └── config.go        # Configuration loading (.env + PORT + Neon_db)
+│   ├── database/
+│   │   ├── database.go      # Connection pool setup
+│   │   ├── migrate.go       # Schema application on startup
+│   │   └── schema.sql       # Embedded table definitions
+│   └── task/
+│       ├── task.go          # Task model and domain errors
+│       └── store.go         # PostgreSQL persistence
+├── docs/
+│   └── API.md               # Full API reference
+├── .env.example             # Template for .env
+├── go.mod                   # Module definition
+└── go.sum                   # Dependency checksums
 ```
+
+**Why this shape:**
+
+- `cmd/server` holds the entry point, so the module can grow more binaries (a
+  migration tool, a seeder) without disturbing the server.
+- `internal/` is enforced by the Go toolchain: nothing outside this module can
+  import these packages, so they stay free to change.
+- Dependencies point one way — `api` → `task` → `database`. The `task` package
+  never imports `api`, and `api` never imports pgx.
+- `api` declares the `TaskStore` interface it needs at the point of use, so
+  handlers can be tested against a fake with no database.
+- The store translates driver errors into domain errors (`task.ErrNotFound`),
+  so swapping PostgreSQL for another backend would not touch the HTTP layer.
 
 ---
 
@@ -157,6 +194,8 @@ Task-Manger-Go/
 - Error responses are returned as plain text, not JSON.
 - `PUT /tasks/{id}` is a full replace — omitting a field resets it to its zero value rather than leaving it unchanged.
 - The schema is created on startup with `CREATE TABLE IF NOT EXISTS`; there is no migration tooling for future schema changes.
+- Routes are exact: `/tasks/1/` (trailing slash) and unknown paths return `404`.
+- There is no test suite yet. The `TaskStore` interface in `internal/api` exists so handlers can be tested against a fake without a database.
 
 ---
 
